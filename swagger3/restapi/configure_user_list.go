@@ -13,9 +13,9 @@ import (
 	middleware "github.com/go-openapi/runtime/middleware"
 	"github.com/go-openapi/swag"
 
-	"swagger3/models"
-	"swagger3/restapi/operations"
-	"swagger3/restapi/operations/users"
+	"simpleAPI/swagger3/models"
+	"simpleAPI/swagger3/restapi/operations"
+	"simpleAPI/swagger3/restapi/operations/users"
 )
 
 //go:generate swagger generate server --target .. --name UserList --spec ../swagger.yml

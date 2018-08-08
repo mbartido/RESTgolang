@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-openapi/runtime"
 
-	models "swagger3/models"
+	models "simpleAPI/swagger3/models"
 )
 
 // FindUsersOKCode is the HTTP code returned for type FindUsersOK

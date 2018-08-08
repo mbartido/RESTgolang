@@ -19,7 +19,7 @@ import (
 	strfmt "github.com/go-openapi/strfmt"
 	"github.com/go-openapi/swag"
 
-	"swagger3/restapi/operations/users"
+	"simpleAPI/swagger3/restapi/operations/users"
 )
 
 // NewUserListAPI creates a new UserList instance
