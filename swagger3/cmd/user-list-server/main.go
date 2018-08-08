@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 
-	"swagger3/restapi"
-	"swagger3/restapi/operations"
+	"simpleAPI/swagger3/restapi"
+	"simpleAPI/swagger3/restapi/operations"
 
 	loads "github.com/go-openapi/loads"
 	flags "github.com/jessevdk/go-flags"
