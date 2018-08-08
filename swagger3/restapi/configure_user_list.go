@@ -87,14 +87,18 @@ func allUsers(since int64, limit int32) (result []*models.User) {
 	return
 }
 
-func oneUser(one int64) *models.User {
+func oneUser(one int64) (*models.User, error) {
 	count := int64(0)
 	for id := range userList {
 		if id == one {
 			count = one
 		}
 	}
-	return userList[count]
+	_, exists := userList[count]
+	if !exists {
+		return nil, errors.NotFound("not found: user %d", one)
+	}
+	return userList[count], nil
 }
 
 func configureFlags(api *operations.UserListAPI) {
@@ -139,11 +143,11 @@ func configureAPI(api *operations.UserListAPI) http.Handler {
 		return users.NewFindUsersOK().WithPayload(allUsers(*mergedParams.Since, *mergedParams.Limit))
 	})
 	api.UsersGetOneHandler = users.GetOneHandlerFunc(func(params users.GetOneParams) middleware.Responder {
-		// if err := oneUser(params.ID, nil); err != nil {
-		// 	return users.NewGetOneDefault(500).WithPayload(&models.Error{Code: 500, Message: swag.String(err.Error())})
-		// }
-		// return users.NewGetOneOK().WithPayload(oneUser(params.ID))
-		return users.NewGetOneOK().WithPayload(oneUser(params.ID))
+		if u, err := oneUser(params.ID); err != nil {
+			return users.NewGetOneDefault(500).WithPayload(&models.Error{Code: 500, Message: swag.String(err.Error())})
+		} else {
+			return users.NewGetOneOK().WithPayload(u)
+		}
 	})
 	api.UsersUpdateOneHandler = users.UpdateOneHandlerFunc(func(params users.UpdateOneParams) middleware.Responder {
 		if err := updateUser(params.ID, params.Body); err != nil {
