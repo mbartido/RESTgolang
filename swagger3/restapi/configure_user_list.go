@@ -4,9 +4,12 @@ package restapi
 
 import (
 	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
+	"log"
 	"net/http"
-	"sync"
-	"sync/atomic"
+	"os"
 
 	errors "github.com/go-openapi/errors"
 	runtime "github.com/go-openapi/runtime"
@@ -18,88 +21,12 @@ import (
 	"simpleAPI/swagger3/restapi/operations/users"
 )
 
+// Users struct which has array of users
+type Users struct {
+	Users []*models.User `json:"users"`
+}
+
 //go:generate swagger generate server --target .. --name UserList --spec ../swagger.yml
-
-var userList = make(map[int64]*models.User)
-var lastID int64
-var usersLock = &sync.Mutex{}
-
-func newUserID() int64 {
-	return atomic.AddInt64(&lastID, 1)
-}
-
-func addUser(user *models.User) error {
-	if user == nil {
-		return errors.New(500, "user must be present")
-	}
-
-	usersLock.Lock()
-	defer usersLock.Unlock()
-
-	newID := newUserID()
-	user.ID = newID
-	userList[newID] = user
-
-	return nil
-}
-
-func updateUser(id int64, user *models.User) error {
-	if user == nil {
-		return errors.New(500, "user must be present")
-	}
-
-	usersLock.Lock()
-	defer usersLock.Unlock()
-
-	_, exists := userList[id]
-	if !exists {
-		return errors.NotFound("not found: user %d", id)
-	}
-
-	user.ID = id
-	userList[id] = user
-	return nil
-}
-
-func deleteUser(id int64) error {
-	usersLock.Lock()
-	defer usersLock.Unlock()
-
-	_, exists := userList[id]
-	if !exists {
-		return errors.NotFound("not found: user %d", id)
-	}
-
-	delete(userList, id)
-	return nil
-}
-
-func allUsers(since int64, limit int32) (result []*models.User) {
-	result = make([]*models.User, 0)
-	for id, user := range userList {
-		if len(result) >= int(limit) {
-			return
-		}
-		if since == 0 || id > since {
-			result = append(result, user)
-		}
-	}
-	return
-}
-
-func oneUser(one int64) (*models.User, error) {
-	count := int64(0)
-	for id := range userList {
-		if id == one {
-			count = one
-		}
-	}
-	_, exists := userList[count]
-	if !exists {
-		return nil, errors.NotFound("not found: user %d", one)
-	}
-	return userList[count], nil
-}
 
 func configureFlags(api *operations.UserListAPI) {
 	// api.CommandLineOptionsGroups = []swag.CommandLineOptionsGroup{ ... }
@@ -115,44 +42,165 @@ func configureAPI(api *operations.UserListAPI) http.Handler {
 	// Example:
 	// api.Logger = log.Printf
 
-	api.JSONConsumer = runtime.JSONConsumer()
+	// initialize Users array
+	var uList Users
 
+	api.JSONConsumer = runtime.JSONConsumer()
 	api.JSONProducer = runtime.JSONProducer()
 
 	api.UsersAddOneHandler = users.AddOneHandlerFunc(func(params users.AddOneParams) middleware.Responder {
-		if err := addUser(params.Body); err != nil {
-			return users.NewAddOneDefault(500).WithPayload(&models.Error{Code: 500, Message: swag.String(err.Error())})
+		// File opening
+		jsonFile, err := os.Open("users.json")
+		if err != nil {
+			log.Fatal(err)
 		}
+		fmt.Println("Opened users.json successfully")
+		defer jsonFile.Close()
+		// read file as byte array
+		byteValue, _ := ioutil.ReadAll(jsonFile)
+
+		// Read json into uList and append users to main structure of json
+		json.Unmarshal(byteValue, &uList)
+		result := make([]*models.User, 0)
+		mainStruct := Users{}
+		for i := 0; i < len(uList.Users); i++ {
+			result = append(result, uList.Users[i])
+			mainStruct.Users = append(mainStruct.Users, uList.Users[i])
+		}
+
+		// Add user to mainStruct
+		// Main struct is for holding users with new added user
+		resultLen := int64(len(result)) + 1 // because 0 indexed
+		u := &models.User{ID: resultLen, Name: params.Body.Name}
+		mainStruct.Users = append(mainStruct.Users, u)
+
+		// Error checking
+		error := errors.New(500, "user must be present")
+		endList, err := json.MarshalIndent(mainStruct, "", "  ")
+		if err != nil {
+			return users.NewAddOneDefault(500).WithPayload(&models.Error{Code: 500, Message: swag.String(error.Error())})
+		}
+		ioutil.WriteFile("users.json", endList, 0644)
 		return users.NewAddOneCreated().WithPayload(params.Body)
 	})
+
 	api.UsersDestroyOneHandler = users.DestroyOneHandlerFunc(func(params users.DestroyOneParams) middleware.Responder {
-		if err := deleteUser(params.ID); err != nil {
-			return users.NewDestroyOneDefault(500).WithPayload(&models.Error{Code: 500, Message: swag.String(err.Error())})
+		// File opening
+		jsonFile, err := os.Open("users.json")
+		if err != nil {
+			log.Fatal(err)
 		}
+		fmt.Println("Opened users.json successfully")
+		defer jsonFile.Close()
+		// read file as byte array
+		byteValue, _ := ioutil.ReadAll(jsonFile)
+
+		// Read json into uList and append users to main structure of json
+		json.Unmarshal(byteValue, &uList)
+		result := make([]*models.User, 0)
+		mainStruct := Users{}
+		for i := 0; i < len(uList.Users); i++ {
+			result = append(result, uList.Users[i])
+			mainStruct.Users = append(mainStruct.Users, uList.Users[i])
+		}
+
+		// Error checking
+		error := errors.NotFound("not found: user %d", params.ID)
+		if int(params.ID) > len(mainStruct.Users) || int(params.ID) <= 0 {
+			return users.NewUpdateOneDefault(500).WithPayload(&models.Error{Code: 500, Message: swag.String(error.Error())})
+		}
+
+		// Delete user in mainStruct using slices
+		i1 := mainStruct.Users[:params.ID-1]
+		i2 := mainStruct.Users[params.ID:]
+		for i := 0; i < len(i2); i++ { // adjust id of right side
+			i2[i].ID = i2[i].ID - 1
+		}
+		s := append(i1, i2...)
+		mainStruct.Users = s
+		endList, _ := json.MarshalIndent(mainStruct, "", "  ")
+		// Write to file
+		ioutil.WriteFile("users.json", endList, 0644)
 		return users.NewDestroyOneNoContent()
 	})
+
 	api.UsersFindUsersHandler = users.FindUsersHandlerFunc(func(params users.FindUsersParams) middleware.Responder {
-		mergedParams := users.NewFindUsersParams()
-		mergedParams.Since = swag.Int64(0)
-		if params.Since != nil {
-			mergedParams.Since = params.Since
+		// File opening
+		jsonFile, err := os.Open("users.json")
+		if err != nil {
+			log.Fatal(err)
 		}
-		if params.Limit != nil {
-			mergedParams.Limit = params.Limit
+		fmt.Println("Opened users.json successfully")
+		defer jsonFile.Close()
+		// read file as byte array
+		byteValue, _ := ioutil.ReadAll(jsonFile)
+
+		// Reads json into result and then we use map of result to return
+		json.Unmarshal(byteValue, &uList)
+		result := make([]*models.User, 0)
+		for i := 0; i < len(uList.Users); i++ {
+			result = append(result, uList.Users[i])
 		}
-		return users.NewFindUsersOK().WithPayload(allUsers(*mergedParams.Since, *mergedParams.Limit))
+		return users.NewFindUsersOK().WithPayload(result)
 	})
+
 	api.UsersGetOneHandler = users.GetOneHandlerFunc(func(params users.GetOneParams) middleware.Responder {
-		if u, err := oneUser(params.ID); err != nil {
-			return users.NewGetOneDefault(500).WithPayload(&models.Error{Code: 500, Message: swag.String(err.Error())})
-		} else {
-			return users.NewGetOneOK().WithPayload(u)
+		// File opening
+		jsonFile, err := os.Open("users.json")
+		if err != nil {
+			log.Fatal(err)
 		}
+		fmt.Println("Opened users.json successfully")
+		defer jsonFile.Close()
+		// read file as byte array
+		byteValue, _ := ioutil.ReadAll(jsonFile)
+
+		// Reading json into list where we'll find the user
+		json.Unmarshal(byteValue, &uList)
+		list := make([]*models.User, 0)
+		for i := 0; i < len(uList.Users); i++ {
+			list = append(list, uList.Users[i])
+		}
+
+		// Error checking
+		error := errors.NotFound("not found: user %d", params.ID)
+		if int(params.ID) > len(list) || int(params.ID) <= 0 {
+			return users.NewGetOneDefault(500).WithPayload(&models.Error{Code: 500, Message: swag.String(error.Error())})
+		}
+		return users.NewGetOneOK().WithPayload(list[params.ID-1]) // ID -1 because list is 0 indexed
 	})
+
 	api.UsersUpdateOneHandler = users.UpdateOneHandlerFunc(func(params users.UpdateOneParams) middleware.Responder {
-		if err := updateUser(params.ID, params.Body); err != nil {
-			return users.NewUpdateOneDefault(500).WithPayload(&models.Error{Code: 500, Message: swag.String(err.Error())})
+		// File opening
+		jsonFile, err := os.Open("users.json")
+		if err != nil {
+			log.Fatal(err)
 		}
+		fmt.Println("Opened users.json successfully")
+		defer jsonFile.Close()
+		// read file as byte array
+		byteValue, _ := ioutil.ReadAll(jsonFile)
+
+		// Read json into uList and append users to main structure of json
+		json.Unmarshal(byteValue, &uList)
+		result := make([]*models.User, 0)
+		mainStruct := Users{}
+		for i := 0; i < len(uList.Users); i++ {
+			result = append(result, uList.Users[i])
+			mainStruct.Users = append(mainStruct.Users, uList.Users[i])
+		}
+
+		// Error checking
+		error := errors.NotFound("not found: user %d", params.ID)
+		if int(params.ID) > len(mainStruct.Users) || int(params.ID) <= 0 {
+			return users.NewUpdateOneDefault(500).WithPayload(&models.Error{Code: 500, Message: swag.String(error.Error())})
+		}
+
+		// Update user in mainStruct
+		mainStruct.Users[params.ID-1].Name = params.Body.Name
+		endList, _ := json.MarshalIndent(mainStruct, "", "  ")
+		// Write to file
+		ioutil.WriteFile("users.json", endList, 0644)
 		return users.NewUpdateOneOK().WithPayload(params.Body)
 	})
 
